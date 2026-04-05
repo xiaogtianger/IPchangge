@@ -1,8 +1,8 @@
-name: Clean & Filter IP List (HK JP KR SG only)
+name: Clean & Filter IP List (Only HK JP KR SG - Pure)
 
 on:
   schedule:
-    - cron: '0 0 */3 * *'
+    - cron: '0 0 */3 * *'      # 每 3 天运行一次
   workflow_dispatch:
 
 jobs:
@@ -18,12 +18,12 @@ jobs:
         with:
           ref: main
 
-      - name: 下载并过滤 IP（仅保留 HK JP KR SG 并去掉 -数字）
+      - name: 下载并生成最干净的 IP 列表（纯 #HK #JP #KR #SG）
         run: |
           echo "开始下载原始 IP 文件..."
           curl -s -f -L https://raw.githubusercontent.com/chris202010/yxip/refs/heads/main/ip.txt -o raw-ip.txt || { echo "❌ 下载失败"; exit 1; }
 
-          echo "开始清理并过滤（仅保留 HK/JP/KR/SG 并去除 -1/-20 等）..."
+          echo "开始清理并过滤（仅保留 HK/JP/KR/SG 并转为纯国家代码）..."
 
           > clean-ip.txt
           count=0
@@ -35,10 +35,10 @@ jobs:
             # 提取 IP:端口
             ip_port=$(echo "$line" | cut -d'#' -f1 | sed 's/[[:space:]]*$//')
 
-            # 提取地区部分
+            # 提取地区标识并清理（去掉 -数字 和后续内容）
             if [[ "$line" == *#* ]]; then
               region_part=$(echo "$line" | cut -d'#' -f2- | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              # 去掉 -数字 部分（如 HK-1 → HK，JP-20 → JP）
+              # 取第一个 # 前的内容，然后去掉 -数字（例如 HK-1 → HK，JP-20 → JP）
               region=$(echo "$region_part" | cut -d'#' -f1 | sed 's/-[0-9]*$//' | sed 's/[[:space:]]*$//')
             else
               region=""
@@ -49,13 +49,14 @@ jobs:
               region_upper=$(echo "$region" | tr '[:lower:]' '[:upper:]')
               if [[ "$region_upper" == *"HK"* || "$region_upper" == *"JP"* || 
                     "$region_upper" == *"KR"* || "$region_upper" == *"SG"* ]]; then
-                echo "${ip_port}#${region}" >> clean-ip.txt
+                # 输出纯净格式：IP:端口#HK
+                echo "${ip_port}#${region_upper}" >> clean-ip.txt
                 count=$((count + 1))
               fi
             fi
           done < raw-ip.txt
 
-          echo "过滤完成！共保留 $count 行干净 IP。"
+          echo "过滤完成！共保留 $count 行纯净 IP（#HK #JP #KR #SG）。"
           echo "前 10 行预览："
           if [[ -s clean-ip.txt ]]; then
             head -n 10 clean-ip.txt
@@ -73,7 +74,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "文件没有变化，跳过提交。"
           else
-            git commit -m "chore: update clean-ip.txt (only HK JP KR SG, no -numbers) $(date +'%Y-%m-%d')"
+            git commit -m "chore: update clean-ip.txt (pure #HK #JP #KR #SG) $(date +'%Y-%m-%d')"
             git push
-            echo "✅ clean-ip.txt 已更新并推送！"
+            echo "✅ clean-ip.txt 已更新为最干净格式并推送！"
           fi
