@@ -1,0 +1,70 @@
+name: Clean IP List from yxip (Every 3 Days)
+
+on:
+  schedule:
+    - cron: '0 0 */3 * *'      # 每3天运行一次（UTC时间）
+  workflow_dispatch:           # 允许手动触发
+
+jobs:
+  clean-ip:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main                # 如果你的默认分支是 master，请改成 master
+
+      - name: 下载并清理 IP 列表
+        run: |
+          echo "开始下载原始 IP 文件..."
+          curl -s https://raw.githubusercontent.com/chris202010/yxip/refs/heads/main/ip.txt -o raw-ip.txt
+
+          echo "开始清理 IP 格式..."
+          > clean-ip.txt
+
+          while IFS= read -r line || [[ -n $line ]]; do
+            line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if [[ -z "$line" ]]; then
+              continue
+            fi
+
+            # 提取 IP:端口
+            ip_port=$(echo "$line" | cut -d'#' -f1 | sed 's/[[:space:]]*$//')
+
+            # 提取地区标识（支持 #DE|官方优选|175ms 这种格式）
+            if [[ "$line" == *#* ]]; then
+              region_part=$(echo "$line" | cut -d'#' -f2- | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              region=$(echo "$region_part" | cut -d'#' -f1 | sed 's/[[:space:]]*$//')
+            else
+              region=""
+            fi
+
+            if [[ -n "$region" ]]; then
+              echo "${ip_port}#${region}" >> clean-ip.txt
+            else
+              echo "${ip_port}" >> clean-ip.txt
+            fi
+          done < raw-ip.txt
+
+          echo "清理完成！共处理 $(wc -l < clean-ip.txt) 行。"
+          echo "前5行预览："
+          head -n 5 clean-ip.txt
+
+      - name: 提交并推送清理后的 IP 文件
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add clean-ip.txt
+
+          if git diff --staged --quiet; then
+            echo "文件没有变化，跳过提交。"
+          else
+            git commit -m "chore: update cleaned ip list $(date +'%Y-%m-%d')"
+            git push
+            echo "✅ 清理后的 IP 文件已成功推送！"
+          fi
