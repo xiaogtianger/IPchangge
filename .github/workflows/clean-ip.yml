@@ -48,11 +48,16 @@ jobs:
                 region = toupper(region_part)
                 if (region !~ /^(JP|KR|SG|HK|US)$/) next
 
-                # 尝试提取延迟 (ms)
-                speed = 9999  # 默认值（越小越快）
-                match($0, /([0-9]+\.?[0-9]*)[[:space:]]*ms/)
+                # 智能提取延迟（支持多种格式）
+                speed = 9999
+                # 匹配 xxx.xx ms 或 (xxx ms) 等常见格式
+                match($0, /([0-9]+\.?[0-9]*)[[:space:]]*(ms|毫秒)/)
                 if (RSTART > 0) {
                   speed = substr($0, RSTART, RLENGTH-2) + 0
+                } else {
+                  # 备用匹配
+                  match($0, /[0-9]+\.?[0-9]*[[:space:]]*ms/)
+                  if (RSTART > 0) speed = substr($0, RSTART, RLENGTH-2) + 0
                 }
 
                 print ip_port "#" region "#" speed
@@ -60,7 +65,7 @@ jobs:
             ' "$file" >> all_with_speed.txt
           done
 
-          # 全局去重（相同 IP:端口 保留延迟最小的）
+          # 全局去重 + 保留最优延迟
           sort -t'#' -k1,1 -k3,3n all_with_speed.txt | awk -F'#' '!seen[$1]++' > deduped.txt
 
           echo "🎯 按国家优选最快的 5 个 IP..."
@@ -76,11 +81,9 @@ jobs:
             echo "📊 $country: 找到 $lines 个可用 IP"
 
             if [[ $lines -gt 0 ]]; then
-              # 按速度排序（从小到大）并取前 5 个
-              sort -t'#' -k3,3n "${country}.txt" | head -n 5 > "${country}_top5.txt"
-              
-              cat "${country}_top5.txt" >> best-ips/clean-ip.txt
-              taken=$(wc -l < "${country}_top5.txt")
+              # 按速度从小到大排序，取前5
+              sort -t'#' -k3,3n "${country}.txt" | head -n 5 >> best-ips/clean-ip.txt
+              taken=$(wc -l < <(sort -t'#' -k3,3n "${country}.txt" | head -n 5))
               total=$((total + taken))
               echo "   → 优选最快 $taken 个"
             else
@@ -88,12 +91,12 @@ jobs:
             fi
           done
 
-          # 最终输出只保留 IP#国家 格式，并按国家顺序 + 速度排序
+          # 清理成最终格式：IP:port#国家
           awk -F'#' '{print $1 "#" $2}' best-ips/clean-ip.txt > best-ips/clean-ip.txt.tmp
           mv best-ips/clean-ip.txt.tmp best-ips/clean-ip.txt
 
           echo "✅ 提取完成！最终共 $total 个最优 IP"
-          echo "📋 最终列表（已按国家 + 速度排序）："
+          echo "📋 最终列表预览："
           cat best-ips/clean-ip.txt
 
           rm -f raw*.txt *.txt 2>/dev/null || true
