@@ -1,4 +1,4 @@
-name: Clean & Filter IP List (Random 5 per Country - Total 20)
+name: Clean & Filter IP List (Random 5 per Country - Total 25)
 
 on:
   schedule:
@@ -17,11 +17,11 @@ jobs:
         with:
           ref: main
 
-      - name: 下载并按国家随机提取 5 个 IP（共 20 个）
+      - name: 下载并按国家随机提取 5 个 IP（共 25 个 + 去重）
         run: |
           echo "🚀 开始下载所有 IP 来源..."
 
-          # 下载四个来源
+          # 下载来源
           curl -s -f -L https://raw.githubusercontent.com/chris202010/yxip/refs/heads/main/ip.txt -o raw1.txt || true
           curl -s -f -L https://raw.githubusercontent.com/zhangtaile/bestIP/refs/heads/main/ipinfo.txt -o raw2.txt || true
           curl -s -f -L https://raw.githubusercontent.com/Fido6/bestip/refs/heads/dtaa/bestiphk.txt -o raw3.txt || true
@@ -48,19 +48,26 @@ jobs:
 
                 region = toupper(region_part)
 
-                if (region ~ /^(JP|KR|SG|HK)$/) {
+                if (region ~ /^(JP|KR|SG|HK|US)$/) {
                   print ip_port "#" region
                 }
               }
             ' "$file" >> all_filtered.txt
           done
 
-          echo "🎲 按国家随机抽取 5 个 IP（目标总数 20）..."
+          # === 全局去重（相同 IP:端口 只保留一条）===
+          echo "🧹 正在进行全局去重..."
+          sort -u all_filtered.txt -o all_filtered.txt
 
-          > clean-ip.txt
+          echo "🎲 按国家随机抽取 5 个 IP（目标总数 25）..."
+
+          # 创建输出目录
+          mkdir -p best-ips
+
+          > best-ips/clean-ip.txt
           total=0
 
-          for country in JP KR SG HK; do
+          for country in JP KR SG HK US; do
             grep "#$country$" all_filtered.txt > "${country}.txt" 2>/dev/null || true
             lines=$(wc -l < "${country}.txt" 2>/dev/null || echo 0)
             
@@ -68,10 +75,10 @@ jobs:
 
             if [[ $lines -gt 0 ]]; then
               if [[ $lines -le 5 ]]; then
-                cat "${country}.txt" >> clean-ip.txt
+                cat "${country}.txt" >> best-ips/clean-ip.txt
                 echo "   → 全部保留 $lines 个"
               else
-                shuf -n 5 "${country}.txt" >> clean-ip.txt
+                shuf -n 5 "${country}.txt" >> best-ips/clean-ip.txt
                 echo "   → 随机抽取 5 个"
               fi
               taken=$(( lines > 5 ? 5 : lines ))
@@ -81,24 +88,24 @@ jobs:
             fi
           done
 
-          echo "✅ 提取完成！最终共 $total 个 IP（目标 20 个）"
+          echo "✅ 提取完成！最终共 $total 个 IP（目标 25 个）"
           echo "📋 最终 IP 列表预览："
-          cat clean-ip.txt || echo "（无 IP）"
+          cat best-ips/clean-ip.txt || echo "（无 IP）"
 
           # 清理临时文件
           rm -f raw*.txt *.txt 2>/dev/null || true
 
-      - name: 提交并推送 clean-ip.txt
+      - name: 提交并推送 best-ips/clean-ip.txt
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add clean-ip.txt
+          git add best-ips/clean-ip.txt
 
           if git diff --staged --quiet; then
             echo "📌 文件无变化，跳过提交。"
           else
-            git commit -m "chore: update clean-ip.txt (random 5 per country - total ~20) $(date +'%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "chore: update best-ips/clean-ip.txt (random 5 per country - total ~25 + dedup) $(date +'%Y-%m-%d %H:%M:%S UTC')"
             git push
-            echo "🎉 clean-ip.txt 已更新并推送！"
+            echo "🎉 best-ips/clean-ip.txt 已更新并推送！"
           fi
