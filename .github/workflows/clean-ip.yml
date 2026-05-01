@@ -17,7 +17,7 @@ jobs:
         with:
           ref: main
 
-      - name: 下载并智能优选 IP（排除多个完整网段）
+      - name: 下载并智能优选 IP（按网段排除）
         run: |
           echo "🚀 开始下载所有 IP 来源..."
 
@@ -25,7 +25,21 @@ jobs:
           curl -s -f -L https://raw.githubusercontent.com/zhangtaile/bestIP/refs/heads/main/ipinfo.txt -o raw2.txt || true
           curl -s -f -L https://raw.githubusercontent.com/Fido6/bestip/refs/heads/dtaa/bestiphk.txt -o raw3.txt || true
 
-          echo "🔍 提取 IP 并解析延迟（排除 1. 3. 13. 103. 123. 129. 175. 整个网段）..."
+          echo "🔍 提取 IP 并解析延迟..."
+
+          # ==================== 可维护的排除网段列表 ====================
+          cat > exclude_segments.txt << 'EOF'
+1.
+3.
+13.
+103.
+123.
+129.
+175.
+EOF
+          echo "📋 当前排除的网段："
+          cat exclude_segments.txt
+          # ============================================================
 
           > all_with_speed.txt
 
@@ -33,7 +47,15 @@ jobs:
             [ ! -s "$file" ] && continue
 
             awk '
-              BEGIN { FS = "#"; OFS = "#" }
+              BEGIN { 
+                FS = "#"; OFS = "#" 
+                # 读取排除网段列表
+                while ((getline seg < "exclude_segments.txt") > 0) {
+                  gsub(/^[[:space:]]+|[[:space:]]+$/, "", seg)
+                  if (seg != "") exclude[seg] = 1
+                }
+                close("exclude_segments.txt")
+              }
               {
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "")
                 if (NF == 0 || $0 == "") next
@@ -41,17 +63,17 @@ jobs:
                 ip_port = $1
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", ip_port)
 
-                # ==================== 排除以下完整网段 ====================
-                if (ip_port ~ /^1\./)    { next }   # 1.   网段
-                if (ip_port ~ /^3\./)    { next }   # 3.   网段
-                if (ip_port ~ /^13\./)   { next }   # 13.  网段
-                if (ip_port ~ /^103\./)  { next }   # 103. 网段
-                if (ip_port ~ /^123\./)  { next }   # 123. 网段
-                if (ip_port ~ /^129\./)  { next }   # 129. 网段
-                if (ip_port ~ /^175\./)  { next }   # 175. 网段
-                # =========================================================
+                # 检查是否匹配任何排除网段
+                exclude_flag = 0
+                for (seg in exclude) {
+                  if (ip_port ~ ("^" seg)) {
+                    exclude_flag = 1
+                    break
+                  }
+                }
+                if (exclude_flag) next
 
-                # 提取地区（仅保留 JP KR SG US）
+                # 提取地区
                 region_part = (NF >= 2) ? $2 : ""
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", region_part)
                 gsub(/\|.*/, "", region_part)
@@ -122,11 +144,13 @@ jobs:
           awk -F'#' '{print $1 "#" $2}' best-ips/clean-ip.txt > best-ips/clean-ip.txt.tmp
           mv best-ips/clean-ip.txt.tmp best-ips/clean-ip.txt
 
-          echo "✅ 完成！最终共 $total 个 IP（已排除 1. 3. 13. 103. 123. 129. 175. 网段）"
+          echo "✅ 完成！最终共 $total 个 IP"
+          echo "📋 当前排除的网段："
+          cat exclude_segments.txt
           echo "📋 最终列表预览："
           cat best-ips/clean-ip.txt
 
-          rm -f raw*.txt *.txt 2>/dev/null || true
+          rm -f raw*.txt *.txt exclude_segments.txt 2>/dev/null || true
 
       - name: 提交并推送 best-ips/clean-ip.txt
         run: |
@@ -137,7 +161,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "📌 文件无变化，跳过提交。"
           else
-            git commit -m "chore: update best-ips/clean-ip.txt (exclude 1. 3. 13. 103. 123. 129. 175.) $(date +'%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "chore: update best-ips/clean-ip.txt (excluded 1. 3. 13. 103. 123. 129. 175.) $(date +'%Y-%m-%d %H:%M:%S UTC')"
             git push
             echo "🎉 best-ips/clean-ip.txt 已更新并推送！"
           fi
