@@ -17,7 +17,7 @@ jobs:
         with:
           ref: main
 
-      - name: 下载并智能优选 IP（排除指定网段）
+      - name: 下载并智能优选 IP（最终排除指定网段）
         run: |
           echo "🚀 开始下载所有 IP 来源..."
 
@@ -27,36 +27,13 @@ jobs:
 
           echo "🔍 提取 IP 并解析延迟..."
 
-          # ====================== 排除网段列表（在这里添加即可） ======================
-          EXCLUDE_SEGMENTS=(
-            "1."     # 1.网段
-            "3."     # 3.网段
-            "13."    # 13.网段
-            "103."   # 103.网段
-            "123."   # 123.网段
-            "129."   # 129.网段
-            "175."   # 175.网段
-            # 在这里新增网段，例如：
-            # "45."
-            # "104."
-            # "192.168."
-          )
-          echo "📋 当前排除的网段：${EXCLUDE_SEGMENTS[*]}"
-          # ============================================================================
-
           > all_with_speed.txt
 
           for file in raw*.txt; do
             [ ! -s "$file" ] && continue
 
-            awk -v exclude="${EXCLUDE_SEGMENTS[*]}" '
-              BEGIN { 
-                FS = "#"; OFS = "#" 
-                split(exclude, excl_arr, " ")
-                for (i in excl_arr) {
-                  if (excl_arr[i] != "") exclude_list[excl_arr[i]] = 1
-                }
-              }
+            awk '
+              BEGIN { FS = "#"; OFS = "#" }
               {
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "")
                 if (NF == 0 || $0 == "") next
@@ -64,14 +41,7 @@ jobs:
                 ip_port = $1
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", ip_port)
 
-                # 检查是否需要排除
-                for (seg in exclude_list) {
-                  if (ip_port ~ ("^" seg)) {
-                    next
-                  }
-                }
-
-                # 提取地区
+                # ==================== 地区过滤 ====================
                 region_part = (NF >= 2) ? $2 : ""
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", region_part)
                 gsub(/\|.*/, "", region_part)
@@ -80,6 +50,7 @@ jobs:
                 region = toupper(region_part)
 
                 if (region !~ /^(JP|KR|SG|US)$/) next
+                # ===================================================
 
                 # 提取延迟
                 speed = 9999
@@ -100,11 +71,11 @@ jobs:
             ' "$file" >> all_with_speed.txt
           done
 
-          # 后面的去重、优选、提交逻辑保持不变
-          echo "🔄 去重并保留最优延迟..."
+          echo "🔄 全局去重..."
           sort -t'#' -k1,1 -k3,3n all_with_speed.txt | awk -F'#' '!seen[$1]++' > deduped.txt
 
-          echo "🎯 按地区智能优选 IP..."
+          echo "🎯 按地区优选 + 最终排除指定网段..."
+
           mkdir -p best-ips
           > best-ips/clean-ip.txt
 
@@ -115,12 +86,19 @@ jobs:
             echo "📊 $country: 找到 $lines 个可用 IP"
 
             if [[ $lines -gt 0 ]]; then
+              # ==================== 最终严格排除网段 ====================
+              # 在这里列出你要去掉的网段（以后只改这里）
+              grep -v -E '^(1\.|3\.|13\.|103\.|123\.|129\.|175\.)' "${country}.txt" > "${country}_filtered.txt" 2>/dev/null || true
+              mv "${country}_filtered.txt" "${country}.txt"
+              lines=$(wc -l < "${country}.txt" 2>/dev/null || echo 0)
+              # =========================================================
+
               has_speed=$(awk -F'#' '$3 < 9999' "${country}.txt" | wc -l)
 
               if [[ $has_speed -gt 0 ]]; then
                 sort -t'#' -k3,3n "${country}.txt" | head -n 10 >> best-ips/clean-ip.txt
                 taken=10
-                echo " → 有测速数据，取最快 10 个"
+                echo "   → 有测速，取最快 10 个"
               else
                 if [[ $lines -le 8 ]]; then
                   cat "${country}.txt" >> best-ips/clean-ip.txt
@@ -129,18 +107,21 @@ jobs:
                   shuf -n 8 "${country}.txt" >> best-ips/clean-ip.txt
                   taken=8
                 fi
-                echo " → 无测速数据，处理 $taken 个"
+                echo "   → 无测速，保留 $taken 个"
               fi
               total=$((total + taken))
             fi
           done
 
+          # 最终格式清理
           awk -F'#' '{print $1 "#" $2}' best-ips/clean-ip.txt > best-ips/clean-ip.txt.tmp
           mv best-ips/clean-ip.txt.tmp best-ips/clean-ip.txt
 
-          echo "✅ 完成！最终共 $total 个 IP"
+          echo "========================================"
+          echo "✅ 完成！最终保留 $total 个 IP（已排除 1. 3. 13. 103. 123. 129. 175. 网段）"
           echo "📋 最终列表预览："
           cat best-ips/clean-ip.txt
+          echo "========================================"
 
           rm -f raw*.txt *.txt 2>/dev/null || true
 
@@ -153,7 +134,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "📌 文件无变化，跳过提交。"
           else
-            git commit -m "chore: update best-ips/clean-ip.txt (excluded multiple segments) $(date +'%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "chore: update best-ips/clean-ip.txt (excluded 1. 3. 13. 103. 123. 129. 175.) $(date +'%Y-%m-%d %H:%M:%S UTC')"
             git push
             echo "🎉 更新成功！"
           fi
